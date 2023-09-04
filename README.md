@@ -34,6 +34,10 @@ Banking api for creating accounts and executing monetary transactions between th
 ## How to build
 `./mvnw clean install docker:build`
 
+## Prerequisites to run:
+- Docker
+- Docker compose plugin
+
 ## How to run
 `docker compose up -d`
 
