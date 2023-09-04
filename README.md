@@ -23,10 +23,11 @@ Banking api for creating accounts and executing monetary transactions between th
   - Response: `{"id": 1, "amount": 1.0,  "from": 1, "to": 2}`
 
 ## Used libraries and technologies
-- Spring, Spring Boot
+- Kotlin `1.9.10` `(JVM 17.0.8 Liberica)`
+- Spring `6.0.11`, Spring Boot `3.1.3`
 - Spring WebFlux
-- Spring Data R2DBC
-- Postgres
+- Spring Data R2DBC 
+- Postgres 15
 - Testcontainers
 - Flyway
 - Docker, Docker Compose
