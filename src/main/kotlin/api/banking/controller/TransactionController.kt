@@ -8,22 +8,28 @@ import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import reactor.core.publisher.Mono
+import java.math.BigDecimal
 
 @RestController
 @RequestMapping("/transactions")
 class TransactionController(val transactionsService: TransactionsService) {
 
     @PostMapping
-    fun createTransaction(transactionRequest: CreateTransactionRequest): Mono<ResponseEntity<Transaction>> {
+    fun createTransaction(@RequestBody transactionRequest: CreateTransactionRequest): Mono<ResponseEntity<Transaction>> {
         return transactionsService.createTransaction(
             transactionRequest.amount,
             transactionRequest.from,
             transactionRequest.to
         )
             .map { ResponseEntity.ok(it) }
+            .onErrorResume {
+                println(it.message)
+                Mono.error(it)
+            }
             .onErrorResume { e: Throwable ->
                 when (e) {
                     is ClientException -> Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).build())

@@ -22,8 +22,8 @@ class AccountsService(val accountRepository: AccountRepository) {
     }
 
     fun updateAccountBalance(id: Long, newBalance: BigDecimal): Mono<Account> {
-        if (newBalance <= BigDecimal.ZERO) {
-            return Mono.error(InvalidBalanceException("Balance must be positive"))
+        if (newBalance < BigDecimal.ZERO) {
+            return Mono.error(InvalidBalanceException("Balance must not be negative"))
         }
         return getAccount(id).flatMap {
             it.balance = newBalance
@@ -34,7 +34,7 @@ class AccountsService(val accountRepository: AccountRepository) {
     fun createAccount(startingBalance: BigDecimal?): Mono<Account> {
         val balance = startingBalance ?: defaultStartingBalance
         if (balance <= BigDecimal.ZERO) {
-            return Mono.error(InvalidBalanceException("Account starting balance must be positive"))
+            return Mono.error(InvalidBalanceException("Account starting balance cannot be negative"))
         }
         return accountRepository.save(Account(
             id = null,

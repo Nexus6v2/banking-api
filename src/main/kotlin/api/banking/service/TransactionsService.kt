@@ -4,25 +4,23 @@ import api.banking.model.InsufficientFundsException
 import api.banking.model.InvalidAmountException
 import api.banking.model.Transaction
 import api.banking.repository.TransactionRepository
-import org.springframework.dao.OptimisticLockingFailureException
-import org.springframework.retry.annotation.Backoff
-import org.springframework.retry.annotation.Retryable
+import io.github.resilience4j.retry.annotation.Retry
+import io.r2dbc.spi.ConnectionFactory
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import reactor.core.publisher.Mono
 import java.math.BigDecimal
 
+
 @Service
 class TransactionsService(val transactionRepository: TransactionRepository,
-                          val accountsService: AccountsService
+                          val accountsService: AccountsService,
+                          val connectionFactory: ConnectionFactory
 ) {
 
     @Transactional
-    @Retryable(
-        retryFor = [OptimisticLockingFailureException::class],
-        maxAttempts = 3,
-        backoff = Backoff(delay = 500)
-    )
+    @Retry(name = "create-transaction")
     fun createTransaction(amount: BigDecimal,
                           fromId: Long,
                           toId: Long
@@ -36,26 +34,16 @@ class TransactionsService(val transactionRepository: TransactionRepository,
                 Mono.error(InsufficientFundsException("Insufficient funds"))
             } else {
                 accountsService.getAccount(toId).flatMap { toAccount ->
-                    Mono.zip(
-                        accountsService.updateAccountBalance(fromId, fromAccount.balance!! - amount),
-                        accountsService.updateAccountBalance(toId, toAccount.balance!! + amount),
-                        transactionRepository.save(Transaction(
+                    accountsService.updateAccountBalance(fromId, fromAccount.balance!! - amount)
+                        .then(accountsService.updateAccountBalance(toId, toAccount.balance!! + amount))
+                        .then(transactionRepository.save(Transaction(
                             id = null,
                             amount = amount,
-                            from = fromId,
-                            to = toId
-                        ))
-                    ).map { it.t3 }
+                            sender = fromId,
+                            recipient = toId
+                        )))
                 }
             }
-        }.onErrorResume(OptimisticLockingFailureException::class.java) {
-            transactionRepository.save(Transaction(
-                id = null,
-                amount = amount,
-                from = fromId,
-                to = toId,
-                failed = true
-            ))
         }
     }
 }

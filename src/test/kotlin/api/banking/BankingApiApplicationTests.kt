@@ -7,18 +7,27 @@ import api.banking.model.dto.CreateAccountRequest
 import api.banking.model.dto.CreateTransactionRequest
 import api.banking.repository.AccountRepository
 import api.banking.repository.TransactionRepository
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
-import org.springframework.web.client.RestTemplate
+import org.springframework.web.reactive.function.client.WebClient
 import org.testcontainers.containers.PostgreSQLContainer
+import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 import java.math.BigDecimal
+import java.time.Duration
+import java.util.ArrayList
 
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -32,6 +41,9 @@ class BankingApiApplicationTests {
 
 	@Autowired
 	lateinit var testRestTemplate: TestRestTemplate
+
+	@LocalServerPort
+	var localServerPort: Int = 0
 
 	@Test
 	fun testAccountCreateInvalidBalance() {
@@ -93,7 +105,7 @@ class BankingApiApplicationTests {
 		val senderId = senderAccount.id!!
 		val recipientAccount = createAccount(balance = balance)
 		val recipientId = recipientAccount.id!!
-		val amount: BigDecimal = BigDecimal.valueOf(5.555)
+		val amount = BigDecimal.valueOf(5.555)
 
 		val request = CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)
 		val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
@@ -102,12 +114,144 @@ class BankingApiApplicationTests {
 		val responseBody = response.body!!
 		val createdTransaction = transactionRepository.findById(responseBody.id!!).block()!!
 		assertEquals(amount, createdTransaction.amount)
-		assertEquals(senderId, createdTransaction.from)
-		assertEquals(recipientId, createdTransaction.to)
+		assertEquals(senderId, createdTransaction.sender)
+		assertEquals(recipientId, createdTransaction.recipient)
 		val updatedSender = accountRepository.findById(senderId).block()!!
 		assertEquals(balance - amount, updatedSender.balance)
 		val updatedRecipient = accountRepository.findById(recipientId).block()!!
 		assertEquals(balance + amount, updatedRecipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateNegativeAmount() {
+		val balance = BigDecimal.valueOf(100.2)
+		val senderAccount = createAccount(balance = balance)
+		val senderId = senderAccount.id!!
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(-100.2)
+
+		val request = CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)
+		val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
+
+		assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+		val sender = accountRepository.findById(senderId).block()!!
+		assertEquals(balance, sender.balance)
+		val recipient = accountRepository.findById(recipientId).block()!!
+		assertEquals(balance, recipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateZeroAmount() {
+		val balance = BigDecimal.valueOf(100.2)
+		val senderAccount = createAccount(balance = balance)
+		val senderId = senderAccount.id!!
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(0)
+
+		val request = CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)
+		val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
+
+		assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+		val sender = accountRepository.findById(senderId).block()!!
+		assertEquals(balance, sender.balance)
+		val recipient = accountRepository.findById(recipientId).block()!!
+		assertEquals(balance, recipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateAsync() {
+		val balance = BigDecimal.valueOf(100.11)
+		val senderAccount = createAccount(balance = balance)
+		val senderId = senderAccount.id!!
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(0.1)
+
+		val numberOfOperations = 20
+		val client = WebClient.create("http://localhost:$localServerPort")
+		Flux.range(1, numberOfOperations)
+			.delayElements(Duration.ofMillis(200))
+			.map { Mono.just(CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)) }
+			.flatMap {
+				client.post()
+					.uri("/transactions")
+					.contentType(MediaType.APPLICATION_JSON)
+					.body(it, CreateTransactionRequest::class.java)
+					.accept(MediaType.APPLICATION_JSON)
+					.retrieve()
+					.toEntity(Transaction::class.java)
+			}
+			.onErrorResume { Mono.empty<ResponseEntity<Transaction>>() }
+			.collectList()
+			.block()
+
+		val updatedSender = accountRepository.findById(senderId).block()!!
+		assertEquals(balance - amount * numberOfOperations.toBigDecimal(), updatedSender.balance)
+		val updatedRecipient = accountRepository.findById(recipientId).block()!!
+		assertEquals(balance + amount * numberOfOperations.toBigDecimal(), updatedRecipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateConcurrent() {
+		val balance = BigDecimal.valueOf(100.11)
+		val senderAccount = createAccount(balance = balance)
+		val senderId = senderAccount.id!!
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(0.1)
+
+		val numberOfOperations = 200
+		val successfulResponses = makeTransactionRequests(numberOfOperations, amount, senderId, recipientId)
+
+		val updatedSender = accountRepository.findById(senderId).block()!!
+		assertEquals(balance - amount * successfulResponses.size.toBigDecimal(), updatedSender.balance)
+		val updatedRecipient = accountRepository.findById(recipientId).block()!!
+		assertEquals(balance + amount * successfulResponses.size.toBigDecimal(), updatedRecipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateInsufficientFunds() {
+		val balance = BigDecimal.valueOf(0.5)
+		val senderAccount = createAccount(balance = balance)
+		val senderId = senderAccount.id!!
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(0.1)
+
+		val numberOfOperations = 10
+		val successfulResponses = makeTransactionRequests(numberOfOperations, amount, senderId, recipientId)
+		val updatedSender = accountRepository.findById(senderId).block()!!
+		val updatedSenderBalance = balance - amount * successfulResponses.size.toBigDecimal()
+		assertEquals(updatedSenderBalance, updatedSender.balance)
+		assertEquals(0.0.toBigDecimal(), updatedSender.balance)
+		val updatedRecipient = accountRepository.findById(recipientId).block()!!
+		val updatedRecipientBalance = balance + amount * successfulResponses.size.toBigDecimal()
+		assertEquals(updatedRecipientBalance, updatedRecipient.balance)
+
+		val request = CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)
+		val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
+
+		assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+		val newUpdatedSender = accountRepository.findById(senderId).block()!!
+		assertEquals(updatedSenderBalance, newUpdatedSender.balance)
+		val newUpdatedRecipient = accountRepository.findById(recipientId).block()!!
+		assertEquals(updatedRecipientBalance, newUpdatedRecipient.balance)
+	}
+
+	@Test
+	fun testTransactionCreateInvalidSenderAccount() {
+		val balance = BigDecimal.valueOf(100.2)
+		val senderId = 100500L
+		val recipientAccount = createAccount(balance = balance)
+		val recipientId = recipientAccount.id!!
+		val amount = BigDecimal.valueOf(1.01)
+
+		val request = CreateTransactionRequest(amount = amount, from = senderId, to = recipientId)
+		val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
+
+		assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
 	}
 
 	companion object {
@@ -134,6 +278,22 @@ class BankingApiApplicationTests {
 			registry.add("spring.flyway.user") { postgresContainer.username }
 			registry.add("spring.flyway.password") { postgresContainer.password }
 		}
+	}
+
+	private fun makeTransactionRequests(requestAmount: Int = 20, transactionAmount: BigDecimal, senderId: Long, recipientId: Long): ArrayList<ResponseEntity<Transaction>> {
+		val successfulResponses = ArrayList<ResponseEntity<Transaction>>()
+
+		runBlocking {
+			repeat(requestAmount) {
+				launch {
+					val request = CreateTransactionRequest(amount = transactionAmount, from = senderId, to = recipientId)
+					val response = testRestTemplate.postForEntity("/transactions", request, Transaction::class.java)
+					if (response.statusCode == HttpStatus.OK) successfulResponses.add(response)
+				}
+			}
+		}
+
+		return successfulResponses
 	}
 
 	private fun createAccount(balance: BigDecimal = BigDecimal.valueOf(10)): Account {

@@ -7,6 +7,6 @@ CREATE TABLE account (
 CREATE TABLE transaction (
      id SERIAL PRIMARY KEY,
      amount DECIMAL NOT NULL,
-     "from" INT NOT NULL REFERENCES account(id),
-     "to" INT NOT NULL REFERENCES account(id)
+     sender INT NOT NULL REFERENCES account(id),
+     recipient INT NOT NULL REFERENCES account(id)
 );

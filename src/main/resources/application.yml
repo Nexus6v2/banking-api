@@ -1,17 +1,22 @@
 spring:
   r2dbc:
-    url: r2dbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    url: ${R2DBC_URL}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
     pool:
       initial-size: 5
       max-size: 20
   flyway:
-    url: r2dbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    url: ${JDBC_URL}
     user: ${DB_USER}
     password: ${DB_PASSWORD}
     locations: classpath:db/migration
 
-logging:
-  level:
-    org.springframework.data.r2dbc: DEBUG
+resilience4j:
+  retry:
+    instances:
+      create-transaction:
+        retry-exceptions:
+          - org.springframework.dao.OptimisticLockingFailureException
+        max-attempts: 3
+        wait-duration: 100ms
