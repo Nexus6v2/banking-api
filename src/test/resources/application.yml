@@ -1,16 +1,4 @@
 logging:
   level:
     org.springframework.data.r2dbc: DEBUG
-    io.github.resilience4j: DEBUG
-#    org.springframework.web: DEBUG
-
-resilience4j:
-  retry:
-    instances:
-      create-transaction:
-        retry-exceptions:
-          - org.springframework.dao.OptimisticLockingFailureException
-        max-attempts: 3
-        wait-duration: 100ms
-    metrics:
-      enabled: true
+    org.springframework.web: DEBUG

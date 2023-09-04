@@ -4,10 +4,8 @@ import api.banking.model.InsufficientFundsException
 import api.banking.model.InvalidAmountException
 import api.banking.model.Transaction
 import api.banking.repository.TransactionRepository
-import io.github.resilience4j.retry.annotation.Retry
 import io.r2dbc.spi.ConnectionFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import reactor.core.publisher.Mono
 import java.math.BigDecimal
@@ -15,12 +13,10 @@ import java.math.BigDecimal
 
 @Service
 class TransactionsService(val transactionRepository: TransactionRepository,
-                          val accountsService: AccountsService,
-                          val connectionFactory: ConnectionFactory
+                          val accountsService: AccountsService
 ) {
 
     @Transactional
-    @Retry(name = "create-transaction")
     fun createTransaction(amount: BigDecimal,
                           fromId: Long,
                           toId: Long
