@@ -25,10 +25,6 @@ class TransactionController(val transactionsService: TransactionsService) {
             transactionRequest.to
         )
             .map { ResponseEntity.ok(it) }
-            .onErrorResume {
-                println(it.message)
-                Mono.error(it)
-            }
             .onErrorResume { e: Throwable ->
                 when (e) {
                     is ClientException -> Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).build())
